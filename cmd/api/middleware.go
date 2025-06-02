@@ -157,7 +157,38 @@ func (app *application) getUser(ctx context.Context, userId int) (*store.User, e
 
 func (app *application) RateLimiterMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if app.config.rateLimiter.Enabled {
+		if app.config.rateLimiter.Enabled && app.config.redisCfg.enabled {
+			ctx := r.Context()
+			ip := r.RemoteAddr
+			window := app.config.rateLimiter.TimeFrame
+
+			count, err := app.cacheStore.RateLimit.Get(ctx, ip)
+			if err != nil {
+				app.internalServerError(w, r, err)
+				return
+			}
+
+			if count == 0 {
+				if err := app.cacheStore.RateLimit.Set(ctx, ip, window); err != nil {
+					app.internalServerError(w, r, err)
+					return
+				}
+				next.ServeHTTP(w, r)
+			}
+
+			if count != 0 && count < app.config.rateLimiter.RequestPerTimeFrame {
+				if err := app.cacheStore.RateLimit.Incrementor(ctx, ip); err != nil {
+					app.internalServerError(w, r, err)
+					return
+				}
+				next.ServeHTTP(w, r)
+			}
+
+			app.rateLimitExceededResponse(w, r, window.String())
+			return
+		}
+
+		if app.config.rateLimiter.Enabled && !app.config.redisCfg.enabled {
 			if allow, retryAfter := app.rateLimiter.Allow(r.RemoteAddr); !allow {
 				app.rateLimitExceededResponse(w, r, retryAfter.String())
 				return

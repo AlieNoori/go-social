@@ -1,6 +1,8 @@
 package ratelimiter
 
-import "time"
+import (
+	"time"
+)
 
 type Limiter interface {
 	Allow(string) (bool, time.Duration)
